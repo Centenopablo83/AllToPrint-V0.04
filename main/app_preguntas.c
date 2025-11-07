@@ -107,25 +107,35 @@ const char *html_form =
 "        "
 "        // Verificar estado de impresora cada 2 segundos"
 "        function checkPrinterStatus() {"
+"            console.log('🔍 Consultando estado de impresora...');"
 "            fetch('/printer_status')"
-"                .then(r => r.json())"
+"                .then(r => {"
+"                    console.log('📡 Status:', r.status);"
+"                    return r.json();"
+"                })"
 "                .then(data => {"
+"                    console.log('📊 Datos recibidos:', data);"
 "                    if (data.ready) {"
 "                        statusDiv.textContent = '✓ Impresora lista';"
 "                        statusDiv.className = 'status ready';"
 "                        submitBtn.disabled = false;"
+"                        console.log('✅ Estado actualizado: Impresora lista');"
 "                    } else {"
 "                        statusDiv.textContent = '⏳ Esperando impresora...';"
 "                        statusDiv.className = 'status waiting';"
 "                        submitBtn.disabled = true;"
+"                        console.log('❌ Estado actualizado: Esperando impresora');"
 "                    }"
 "                })"
-"                .catch(() => {"
+"                .catch((error) => {"
+"                    console.error('💥 Error:', error);"
 "                    statusDiv.textContent = '✗ Error de conexión';"
 "                    statusDiv.className = 'status waiting';"
 "                });"
 "        }"
 "        "
+"        // Iniciar verificación inmediatamente y luego cada 2 segundos"
+"        console.log('🚀 Iniciando monitor de impresora...');"
 "        checkPrinterStatus();"
 "        setInterval(checkPrinterStatus, 2000);"
 "        "
@@ -287,17 +297,20 @@ static esp_err_t root_get_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Handler GET /printer_status (nuevo - para JS)
+// Handler GET /printer_status (mejorado con más información)
 static esp_err_t printer_status_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "application/json");
     
     bool ready = printer_is_ready();
-    ESP_LOGI(TAG, "Estado impresora consultado: %s", ready ? "LISTA" : "NO LISTA");
     
-    char response[64];
+    // Log detallado para debugging
+    ESP_LOGI(TAG, "📊 Estado impresora consultado - Lista: %s", ready ? "SI" : "NO");
+    
+    char response[128];
     snprintf(response, sizeof(response), 
-             "{\"ready\":%s}", 
-             ready ? "true" : "false");
+             "{\"ready\":%s,\"counter\":%lu}", 
+             ready ? "true" : "false",
+             pregunta_counter);
     
     httpd_resp_sendstr(req, response);
     return ESP_OK;
@@ -305,6 +318,8 @@ static esp_err_t printer_status_handler(httpd_req_t *req) {
 
 // Registrar endpoints de la app
 static void app_register_http_handlers(httpd_handle_t server) {
+    ESP_LOGI(TAG, "📝 Registrando endpoints HTTP de la app...");
+    
     httpd_uri_t root_uri = {
         .uri = "/",
         .method = HTTP_GET,
@@ -312,6 +327,7 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &root_uri);
+    ESP_LOGI(TAG, "✅ Endpoint / registrado");
 
     httpd_uri_t msg_uri = {
         .uri = "/msg",
@@ -320,6 +336,7 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &msg_uri);
+    ESP_LOGI(TAG, "✅ Endpoint /msg registrado");
     
     httpd_uri_t status_uri = {
         .uri = "/printer_status",
@@ -328,6 +345,9 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .user_ctx = NULL
     };
     httpd_register_uri_handler(server, &status_uri);
+    ESP_LOGI(TAG, "✅ Endpoint /printer_status registrado");
+    
+    ESP_LOGI(TAG, "🎯 Todos los endpoints registrados correctamente");
 }
 
 const app_interface_t *get_app_preguntas(void) {
@@ -337,5 +357,19 @@ const app_interface_t *get_app_preguntas(void) {
         .app_register_http_handlers = app_register_http_handlers,
         .app_get_html = NULL
     };
+    
+    // Inicializar la app automáticamente cuando se obtiene por primera vez
+    static bool initialized = false;
+    if (!initialized) {
+        app_init();
+        initialized = true;
+        ESP_LOGI(TAG, "🏁 App Preguntas obtenida e inicializada");
+    }
+    
     return &app;
+}
+
+// 🔥 FUNCIÓN CRÍTICA FALTANTE - Agregar esto
+const app_interface_t *get_active_app(void) {
+    return get_app_preguntas();
 }
