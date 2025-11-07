@@ -8,6 +8,7 @@
 #include "web_server.h"
 #include "wifi_manager.h"
 #include "ota_config_server.h"
+#include "printer_driver.h"  // 🔥 AGREGADO
 
 #define BUTTON_GPIO         GPIO_NUM_0
 #define BUTTON_HOLD_TIME_MS 5000
@@ -85,10 +86,50 @@ static void start_config_mode(void) {
 // Función para modo NORMAL (app actual)
 static void start_normal_mode(void) {
     ESP_LOGI(TAG, "=== MODO NORMAL ===");
-    ESP_LOGI(TAG, "Ejecutando aplicación actual");
     
+    // Configurar nivel de log para USB y printer
+    esp_log_level_set("USBH", ESP_LOG_DEBUG);
+    esp_log_level_set("PRINTER", ESP_LOG_DEBUG);
+    
+    // Inicializar impresora con verificaciones
+    ESP_LOGI(TAG, "Inicializando driver de impresora...");
+    esp_err_t ret = printer_init();
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error inicializando impresora: %s", esp_err_to_name(ret));
+    }
+
+    // Esperar a que la impresora se detecte (máximo 5 segundos)
+    int timeout = 50; // 50 * 100ms = 5 segundos
+    while (!printer_is_ready() && timeout > 0) {
+        ESP_LOGW(TAG, "⏳ Esperando impresora... (%d)", timeout);
+        vTaskDelay(pdMS_TO_TICKS(100));
+        timeout--;
+    }
+
+    if (!printer_is_ready()) {
+        ESP_LOGE(TAG, "❌ Timeout esperando impresora");
+    } else {
+        ESP_LOGI(TAG, "✅ Impresora detectada y lista");
+        
+        // Enviar mensaje de prueba corto
+        const char *test_msg = "\n\nTEST IMPRESORA OK\n123456789\n\n\n";
+        
+        ESP_LOGI(TAG, "📝 Enviando mensaje de prueba...");
+        ret = printer_send_text(test_msg);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "❌ Error enviando mensaje: %s", esp_err_to_name(ret));
+        } else {
+            ESP_LOGI(TAG, "✅ Mensaje enviado correctamente");
+        }
+    }
+    
+    // Pequeño delay antes de continuar
+    vTaskDelay(pdMS_TO_TICKS(500));    
+    ESP_LOGI(TAG, "Iniciando WiFi y servidor web...");
     wifi_manager_init_ap();
     start_webserver();
+    
+    ESP_LOGI(TAG, "Sistema listo - Modo aplicación activo");
 }
 
 void app_main(void) {
