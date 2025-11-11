@@ -47,6 +47,7 @@ const char *html_form =
 "        }"
 "        .ready { background: #d4edda; color: #155724; }"
 "        .waiting { background: #fff3cd; color: #856404; }"
+"        .error { background: #f8d7da; color: #721c24; }"
 "        textarea {"
 "            width: 100%;"
 "            height: 120px;"
@@ -87,7 +88,7 @@ const char *html_form =
 "<body>"
 "    <div class='container'>"
 "        <h1>Escribí lo que quieras</h1>"
-"        <div id='status' class='status waiting'>Esperando impresora...</div>"
+"        <div id='status' class='status waiting'>Conectando...</div>"
 "        <form action='/msg' method='POST' id='msgForm'>"
 "            <textarea name='msg' id='msgText' placeholder='Escribe tu mensaje ANÓNIMO aquí...' "
 "                     maxlength='200' required></textarea>"
@@ -100,42 +101,59 @@ const char *html_form =
 "        const charCount = document.getElementById('charCount');"
 "        const submitBtn = document.getElementById('submitBtn');"
 "        const statusDiv = document.getElementById('status');"
+"        let consecutiveErrors = 0;"
 "        "
 "        textarea.addEventListener('input', function() {"
 "            charCount.textContent = this.value.length;"
 "        });"
 "        "
-"        // Verificar estado de impresora cada 2 segundos"
 "        function checkPrinterStatus() {"
-"            console.log('🔍 Consultando estado de impresora...');"
-"            fetch('/printer_status')"
-"                .then(r => {"
-"                    console.log('📡 Status:', r.status);"
-"                    return r.json();"
-"                })"
-"                .then(data => {"
-"                    console.log('📊 Datos recibidos:', data);"
-"                    if (data.ready) {"
+"            console.log('🔍 Consultando /printer_status...');"
+"            fetch('/printer_status', {"
+"                method: 'GET',"
+"                cache: 'no-cache'"
+"            })"
+"            .then(response => {"
+"                console.log('📡 Response status:', response.status, response.ok);"
+"                if (!response.ok) {"
+"                    throw new Error('HTTP error ' + response.status);"
+"                }"
+"                return response.text();"
+"            })"
+"            .then(text => {"
+"                console.log('📄 Raw response:', text);"
+"                try {"
+"                    const data = JSON.parse(text);"
+"                    console.log('📊 Parsed data:', data);"
+"                    consecutiveErrors = 0;"
+"                    "
+"                    if (data.ready === true) {"
 "                        statusDiv.textContent = '✓ Impresora lista';"
 "                        statusDiv.className = 'status ready';"
 "                        submitBtn.disabled = false;"
-"                        console.log('✅ Estado actualizado: Impresora lista');"
+"                        console.log('✅ Impresora LISTA');"
 "                    } else {"
 "                        statusDiv.textContent = '⏳ Esperando impresora...';"
 "                        statusDiv.className = 'status waiting';"
 "                        submitBtn.disabled = true;"
-"                        console.log('❌ Estado actualizado: Esperando impresora');"
+"                        console.log('⏳ Impresora NO lista');"
 "                    }"
-"                })"
-"                .catch((error) => {"
-"                    console.error('💥 Error:', error);"
-"                    statusDiv.textContent = '✗ Error de conexión';"
-"                    statusDiv.className = 'status waiting';"
-"                });"
+"                } catch(e) {"
+"                    console.error('❌ JSON parse error:', e);"
+"                    statusDiv.textContent = '✗ Error de formato';"
+"                    statusDiv.className = 'status error';"
+"                }"
+"            })"
+"            .catch((error) => {"
+"                consecutiveErrors++;"
+"                console.error('💥 Fetch error:', error);"
+"                statusDiv.textContent = '✗ Error de conexión (' + consecutiveErrors + ')';"
+"                statusDiv.className = 'status error';"
+"                submitBtn.disabled = true;"
+"            });"
 "        }"
 "        "
-"        // Iniciar verificación inmediatamente y luego cada 2 segundos"
-"        console.log('🚀 Iniciando monitor de impresora...');"
+"        console.log('🚀 Iniciando monitor...');"
 "        checkPrinterStatus();"
 "        setInterval(checkPrinterStatus, 2000);"
 "        "
@@ -154,7 +172,7 @@ const char *html_form =
 "                submitBtn.textContent = '✓ Enviado!';"
 "                setTimeout(() => {"
 "                    submitBtn.textContent = 'Enviar';"
-"                    submitBtn.disabled = false;"
+"                    checkPrinterStatus();"
 "                }, 2000);"
 "            });"
 "        });"
@@ -163,62 +181,33 @@ const char *html_form =
 "</html>";
 
 static void app_init(void) {
-    // El printer_init() ya se llamó en main.c
+    // NO inicializar printer aquí - ya se hizo en main.c
     pregunta_counter = 0;
-    ESP_LOGI(TAG, "App 'Preguntas' inicializada");
+    ESP_LOGI(TAG, "App 'Preguntas' inicializada (printer ya iniciado en main)");
 }
 
-// Función para formatear e imprimir pregunta
 static void imprimir_pregunta(const char *texto) {
     if (!printer_is_ready()) {
         ESP_LOGW(TAG, "Impresora no lista, mensaje no impreso");
         return;
     }
-    
-    pregunta_counter++;
-    
-    // Obtener timestamp
-    time_t now;
-    struct tm timeinfo;
-    char timestamp[20];
-    time(&now);
-    localtime_r(&now, &timeinfo);
-    strftime(timestamp, sizeof(timestamp), "%d/%m %H:%M", &timeinfo);
-    
-    // Buffer para el trabajo de impresión completo
+        
     char print_buffer[512];
     int offset = 0;
     
-    // 1. Encabezado con línea separadora
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
-                      "%s%s%s",
+                      "%s%s",
                       ESC_ALIGN_CENTER,
-                      ESC_DOUBLE_SIZE_ON,
                       "PREGUNTA ANONIMA\n");
     
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
-                      "%s%s",
-                      ESC_NORMAL_SIZE,
-                      "================================\n\n");
+                      "%s",
+                      "================================\n");
     
-    // 2. Número y timestamp
-    offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
-                      "%s%sNro: %lu\n",
-                      ESC_ALIGN_LEFT,
-                      ESC_BOLD_ON,
-                      pregunta_counter);
-    
-    offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
-                      "Fecha: %s%s\n\n",
-                      timestamp,
-                      ESC_BOLD_OFF);
-    
-    // 3. Texto de la pregunta
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
                       "%s\n\n",
                       texto);
     
-    // 4. Pie y corte
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
                       "%s================================\n",
                       ESC_ALIGN_CENTER);
@@ -226,13 +215,11 @@ static void imprimir_pregunta(const char *texto) {
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
                       "AllToPrint - Preguntas\n");
     
-    // Avanzar 3 líneas y corte parcial
     offset += snprintf(print_buffer + offset, sizeof(print_buffer) - offset,
                       "%s%s",
                       ESC_FEED_3,
                       ESC_CUT_PARTIAL);
     
-    // Enviar todo de una vez
     esp_err_t ret = printer_send_raw((uint8_t*)print_buffer, offset);
     
     if (ret == ESP_OK) {
@@ -247,42 +234,70 @@ static void app_handle_message(const char *msg) {
     imprimir_pregunta(msg);
 }
 
-// Handler POST /msg
 static esp_err_t msg_post_handler(httpd_req_t *req) {
-    char buf[256] = {0};
-    int ret = httpd_req_recv(req, buf, sizeof(buf)-1);
+    char buf[512] = {0}; 
+    int ret = httpd_req_recv(req, buf, sizeof(buf) - 1);
     if (ret <= 0) {
         httpd_resp_send_500(req);
         return ESP_FAIL;
     }
     buf[ret] = '\0';
     
-    // Decodificar URL (msg=texto+con+espacios)
-    char decoded[256] = {0};
-    char *msg_start = strstr(buf, "msg=");
-    if (msg_start) {
-        msg_start += 4; // Saltar "msg="
+    char *msg_start = NULL;
+    char *msg_end = NULL;
+
+    // 1. Encontrar el inicio del campo 'msg'
+    char *msg_header = strstr(buf, "name=\"msg\""); 
+    
+    if (msg_header) {
+        // 2. Buscar el doble salto de línea ESTÁNDAR HTTP (CRLF)
+        msg_start = strstr(msg_header, "\r\n\r\n");
         
-        // Decodificación simple de URL
-        int j = 0;
-        for (int i = 0; msg_start[i] && j < sizeof(decoded)-1; i++) {
-            if (msg_start[i] == '+') {
-                decoded[j++] = ' ';
-            } else if (msg_start[i] == '%' && msg_start[i+1] && msg_start[i+2]) {
-                // Decodificar %XX
-                char hex[3] = {msg_start[i+1], msg_start[i+2], 0};
-                decoded[j++] = (char)strtol(hex, NULL, 16);
-                i += 2;
-            } else if (msg_start[i] == '&') {
-                break; // Fin del valor
-            } else {
-                decoded[j++] = msg_start[i];
-            }
+        // Fallback: si no es el estándar (aunque el JS debería usar CRLF), probamos con solo \n\n
+        if (!msg_start) {
+            msg_start = strstr(msg_header, "\n\n");
         }
-        decoded[j] = '\0';
-        
-        app_handle_message(decoded);
+
+        if (msg_start) {
+            // Ajustar el puntero para que apunte al inicio del contenido real
+            // Si encontramos \r\n\r\n, avanzamos 4 bytes. Si encontramos \n\n, avanzamos 2.
+            msg_start += (msg_start[1] == '\n') ? 2 : 4; 
+            
+            // 3. Encontrar el final del contenido (el boundary). El boundary comienza con \r\n
+            msg_end = strstr(msg_start, "\r\n------"); 
+            
+            // Fallback: si no es el estándar, probar con solo \n
+            if (!msg_end) {
+                msg_end = strstr(msg_start, "\n------");
+            }
+            
+            // 4. Terminar el string
+            if (msg_end) {
+                // El caracter antes del boundary debe ser el terminador de línea del mensaje. Lo reemplazamos con '\0'.
+                *msg_end = '\0'; 
+                
+                // Limpiar espacios en blanco o saltos de línea al final del mensaje extraído
+                size_t len = strlen(msg_start);
+                // Si el mensaje termina con \r o \n, lo eliminamos
+                while (len > 0 && (msg_start[len - 1] == '\r' || msg_start[len - 1] == '\n' || msg_start[len - 1] == ' ')) {
+                    msg_start[len - 1] = '\0';
+                    len--;
+                }
+
+                // Llamar al manejador con el mensaje limpio
+                app_handle_message(msg_start);
+            } else {
+                // Caso extremo o si es el único campo sin boundary claro (lo enviamos "crudo")
+                app_handle_message(msg_start);
+            }
+        } else {
+            ESP_LOGE(TAG, "Error: Contenido del mensaje no delimitado correctamente.");
+            app_handle_message("Error de formato multipart"); 
+        }
     } else {
+        // Fallback: Si no es multipart/form-data (p. ej., si es form-urlencoded), usar el buffer crudo
+        // Nota: Si usas este fallback, deberías re-introducir la lógica de decodificación de URL de tu código original.
+        ESP_LOGW(TAG, "No se encontró 'name=\"msg\"'. Procesando como URL-encoded o texto plano.");
         app_handle_message(buf);
     }
     
@@ -290,35 +305,46 @@ static esp_err_t msg_post_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
-// Handler GET / (página principal)
 static esp_err_t root_get_handler(httpd_req_t *req) {
     httpd_resp_set_type(req, "text/html");
     httpd_resp_send(req, html_form, HTTPD_RESP_USE_STRLEN);
     return ESP_OK;
 }
 
-// Handler GET /printer_status (mejorado con más información)
+// 🔥 HANDLER MEJORADO CON MÁS LOGS
 static esp_err_t printer_status_handler(httpd_req_t *req) {
+    ESP_LOGI(TAG, "📞 /printer_status consultado");
+    
     httpd_resp_set_type(req, "application/json");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
+    httpd_resp_set_hdr(req, "Pragma", "no-cache");
+    httpd_resp_set_hdr(req, "Expires", "0");
     
     bool ready = printer_is_ready();
     
-    // Log detallado para debugging
-    ESP_LOGI(TAG, "📊 Estado impresora consultado - Lista: %s", ready ? "SI" : "NO");
+    ESP_LOGI(TAG, "📊 printer_is_ready() = %s", ready ? "TRUE" : "FALSE");
     
     char response[128];
-    snprintf(response, sizeof(response), 
-             "{\"ready\":%s,\"counter\":%lu}", 
-             ready ? "true" : "false",
-             pregunta_counter);
+    int len = snprintf(response, sizeof(response), 
+                      "{\"ready\":%s,\"counter\":%lu}", 
+                      ready ? "true" : "false",
+                      pregunta_counter);
     
-    httpd_resp_sendstr(req, response);
-    return ESP_OK;
+    ESP_LOGI(TAG, "📤 Enviando: %s", response);
+    
+    esp_err_t ret = httpd_resp_send(req, response, len);
+    
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "❌ Error enviando respuesta: %s", esp_err_to_name(ret));
+    } else {
+        ESP_LOGI(TAG, "✅ Respuesta enviada correctamente");
+    }
+    
+    return ret;
 }
 
-// Registrar endpoints de la app
 static void app_register_http_handlers(httpd_handle_t server) {
-    ESP_LOGI(TAG, "📝 Registrando endpoints HTTP de la app...");
+    ESP_LOGI(TAG, "📝 Registrando endpoints HTTP...");
     
     httpd_uri_t root_uri = {
         .uri = "/",
@@ -326,8 +352,8 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .handler = root_get_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &root_uri);
-    ESP_LOGI(TAG, "✅ Endpoint / registrado");
+    esp_err_t ret = httpd_register_uri_handler(server, &root_uri);
+    ESP_LOGI(TAG, "/ → %s", esp_err_to_name(ret));
 
     httpd_uri_t msg_uri = {
         .uri = "/msg",
@@ -335,8 +361,8 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .handler = msg_post_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &msg_uri);
-    ESP_LOGI(TAG, "✅ Endpoint /msg registrado");
+    ret = httpd_register_uri_handler(server, &msg_uri);
+    ESP_LOGI(TAG, "/msg → %s", esp_err_to_name(ret));
     
     httpd_uri_t status_uri = {
         .uri = "/printer_status",
@@ -344,10 +370,10 @@ static void app_register_http_handlers(httpd_handle_t server) {
         .handler = printer_status_handler,
         .user_ctx = NULL
     };
-    httpd_register_uri_handler(server, &status_uri);
-    ESP_LOGI(TAG, "✅ Endpoint /printer_status registrado");
+    ret = httpd_register_uri_handler(server, &status_uri);
+    ESP_LOGI(TAG, "/printer_status → %s", esp_err_to_name(ret));
     
-    ESP_LOGI(TAG, "🎯 Todos los endpoints registrados correctamente");
+    ESP_LOGI(TAG, "🎯 Endpoints registrados");
 }
 
 const app_interface_t *get_app_preguntas(void) {
@@ -358,18 +384,16 @@ const app_interface_t *get_app_preguntas(void) {
         .app_get_html = NULL
     };
     
-    // Inicializar la app automáticamente cuando se obtiene por primera vez
     static bool initialized = false;
     if (!initialized) {
         app_init();
         initialized = true;
-        ESP_LOGI(TAG, "🏁 App Preguntas obtenida e inicializada");
+        ESP_LOGI(TAG, "🏁 App Preguntas inicializada");
     }
     
     return &app;
 }
 
-// 🔥 FUNCIÓN CRÍTICA FALTANTE - Agregar esto
 const app_interface_t *get_active_app(void) {
     return get_app_preguntas();
 }

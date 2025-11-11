@@ -110,8 +110,10 @@ static void start_normal_mode(void) {
         ESP_LOGE(TAG, "❌ Timeout esperando impresora");
     } else {
         ESP_LOGI(TAG, "✅ Impresora detectada y lista");
+
+        printer_send_text(ESC_INIT);  // Inicializar impresora
         
-        // Enviar mensaje de prueba corto
+        /* // Enviar mensaje de prueba corto
         const char *test_msg = "\n\nTEST IMPRESORA OK\n123456789\n\n\n";
         
         ESP_LOGI(TAG, "📝 Enviando mensaje de prueba...");
@@ -120,7 +122,7 @@ static void start_normal_mode(void) {
             ESP_LOGE(TAG, "❌ Error enviando mensaje: %s", esp_err_to_name(ret));
         } else {
             ESP_LOGI(TAG, "✅ Mensaje enviado correctamente");
-        }
+        } */
     }
     
     // Pequeño delay antes de continuar
